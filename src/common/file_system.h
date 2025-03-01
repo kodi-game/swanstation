@@ -127,7 +127,4 @@ bool WriteBinaryFile(const char* filename, const void* data, size_t data_length)
 // if they do not exist.
 bool CreateDirectory(const char* Path, bool Recursive);
 
-/// Returns the path to the current executable.
-std::string GetProgramPath();
-
 }; // namespace FileSystem
