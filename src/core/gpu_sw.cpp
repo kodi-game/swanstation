@@ -215,14 +215,105 @@ ALWAYS_INLINE void CopyOutRow16<HostDisplayPixelFormat::RGB565, uint16_t>(const 
 template<>
 ALWAYS_INLINE void CopyOutRow16<HostDisplayPixelFormat::RGBA8, uint32_t>(const uint16_t* src_ptr, uint32_t* dst_ptr, uint32_t width)
 {
-  for (uint32_t col = 0; col < width; col++)
+  uint32_t col = 0;
+
+#if defined(CPU_X64)
+  const uint32_t aligned_width = AlignDownPow2(width, 8);
+  const __m128i single_mask = _mm_set1_epi16(0x1F);
+  for (; col < aligned_width; col += 8)
+  {
+    __m128i value = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_ptr));
+    src_ptr += 8;
+    /* Extract 5-bit channels, then scale to 8 bits. */
+    __m128i r8 = _mm_slli_epi16(_mm_and_si128(value, single_mask), 3);
+    __m128i g8 = _mm_slli_epi16(_mm_and_si128(_mm_srli_epi16(value,  5), single_mask), 3);
+    __m128i b8 = _mm_slli_epi16(_mm_and_si128(_mm_srli_epi16(value, 10), single_mask), 3);
+    /* Alpha: bit 15 expanded.  Arithmetic right shift by 15 fills the
+     * lane with 0xFFFF when the STP bit was set and 0x0000 otherwise;
+     * left-shifting by 8 leaves 0xFF (or 0x00) in the high byte where
+     * the alpha channel needs to land after the unpack. */
+    __m128i a_hi = _mm_slli_epi16(_mm_srai_epi16(value, 15), 8);
+    /* Pack into pairs of u16 lanes that, after interleaving, form the
+     * 32-bit RGBA pixel in little-endian byte order R|G|B|A. */
+    __m128i rg = _mm_or_si128(r8, _mm_slli_epi16(g8, 8));
+    __m128i ba = _mm_or_si128(b8, a_hi);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(dst_ptr),     _mm_unpacklo_epi16(rg, ba));
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(dst_ptr + 4), _mm_unpackhi_epi16(rg, ba));
+    dst_ptr += 8;
+  }
+#elif defined(CPU_AARCH64)
+  const uint32_t aligned_width = AlignDownPow2(width, 8);
+  const uint16x8_t single_mask = vdupq_n_u16(0x1F);
+  for (; col < aligned_width; col += 8)
+  {
+    uint16x8_t value = vld1q_u16(src_ptr);
+    src_ptr += 8;
+    uint16x8_t r8 = vshlq_n_u16(vandq_u16(value, single_mask), 3);
+    uint16x8_t g8 = vshlq_n_u16(vandq_u16(vshrq_n_u16(value,  5), single_mask), 3);
+    uint16x8_t b8 = vshlq_n_u16(vandq_u16(vshrq_n_u16(value, 10), single_mask), 3);
+    /* Arithmetic >> 15 on the signed reinterpretation gives -1 (0xFFFF)
+     * or 0 per lane based on the STP bit; << 8 leaves 0xFF or 0 in the
+     * high byte. */
+    uint16x8_t a_hi = vshlq_n_u16(vreinterpretq_u16_s16(vshrq_n_s16(vreinterpretq_s16_u16(value), 15)), 8);
+    uint16x8x2_t pair;
+    pair.val[0] = vorrq_u16(r8, vshlq_n_u16(g8, 8));   // R|G in u16 lanes
+    pair.val[1] = vorrq_u16(b8, a_hi);                  // B|A in u16 lanes
+    /* vst2q stores .val[0][i] then .val[1][i] for each lane,
+     * producing the little-endian R|G|B|A layout when read as u32. */
+    vst2q_u16(reinterpret_cast<uint16_t*>(dst_ptr), pair);
+    dst_ptr += 8;
+  }
+#endif
+
+  for (; col < width; col++)
     *(dst_ptr++) = VRAM16ToOutput<HostDisplayPixelFormat::RGBA8, uint32_t>(*(src_ptr++));
 }
 
 template<>
 ALWAYS_INLINE void CopyOutRow16<HostDisplayPixelFormat::BGRA8, uint32_t>(const uint16_t* src_ptr, uint32_t* dst_ptr, uint32_t width)
 {
-  for (uint32_t col = 0; col < width; col++)
+  uint32_t col = 0;
+
+#if defined(CPU_X64)
+  const uint32_t aligned_width = AlignDownPow2(width, 8);
+  const __m128i single_mask = _mm_set1_epi16(0x1F);
+  /* BGRA8 always emits 0xFF in the alpha channel regardless of the
+   * source STP bit; keep that as a constant high byte. */
+  const __m128i alpha_hi = _mm_set1_epi16(static_cast<int16_t>(0xFF00));
+  for (; col < aligned_width; col += 8)
+  {
+    __m128i value = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_ptr));
+    src_ptr += 8;
+    __m128i r8 = _mm_slli_epi16(_mm_and_si128(value, single_mask), 3);
+    __m128i g8 = _mm_slli_epi16(_mm_and_si128(_mm_srli_epi16(value,  5), single_mask), 3);
+    __m128i b8 = _mm_slli_epi16(_mm_and_si128(_mm_srli_epi16(value, 10), single_mask), 3);
+    /* Pack pairs so the unpack interleaves them into B|G|R|A bytes. */
+    __m128i bg = _mm_or_si128(b8, _mm_slli_epi16(g8, 8));
+    __m128i ra = _mm_or_si128(r8, alpha_hi);
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(dst_ptr),     _mm_unpacklo_epi16(bg, ra));
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(dst_ptr + 4), _mm_unpackhi_epi16(bg, ra));
+    dst_ptr += 8;
+  }
+#elif defined(CPU_AARCH64)
+  const uint32_t aligned_width = AlignDownPow2(width, 8);
+  const uint16x8_t single_mask = vdupq_n_u16(0x1F);
+  const uint16x8_t alpha_hi    = vdupq_n_u16(0xFF00);
+  for (; col < aligned_width; col += 8)
+  {
+    uint16x8_t value = vld1q_u16(src_ptr);
+    src_ptr += 8;
+    uint16x8_t r8 = vshlq_n_u16(vandq_u16(value, single_mask), 3);
+    uint16x8_t g8 = vshlq_n_u16(vandq_u16(vshrq_n_u16(value,  5), single_mask), 3);
+    uint16x8_t b8 = vshlq_n_u16(vandq_u16(vshrq_n_u16(value, 10), single_mask), 3);
+    uint16x8x2_t pair;
+    pair.val[0] = vorrq_u16(b8, vshlq_n_u16(g8, 8));   // B|G in u16 lanes
+    pair.val[1] = vorrq_u16(r8, alpha_hi);              // R|A (A=0xFF) in u16 lanes
+    vst2q_u16(reinterpret_cast<uint16_t*>(dst_ptr), pair);
+    dst_ptr += 8;
+  }
+#endif
+
+  for (; col < width; col++)
     *(dst_ptr++) = VRAM16ToOutput<HostDisplayPixelFormat::BGRA8, uint32_t>(*(src_ptr++));
 }
 
