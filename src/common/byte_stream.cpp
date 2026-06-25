@@ -442,6 +442,11 @@ GrowableMemoryByteStream::GrowableMemoryByteStream(void* pInitialMem, uint32_t I
   {
     m_iMemorySize = std::max(InitialMemSize, (uint32_t)64);
     m_pPrivateMemory = m_pMemory = (uint8_t*)std::malloc(m_iMemorySize);
+    if (m_pMemory == nullptr)
+    {
+      m_iMemorySize = 0;
+      SetErrorState();
+    }
   }
 }
 
@@ -466,14 +471,29 @@ void GrowableMemoryByteStream::ResizeMemory(uint32_t new_size)
 
   if (m_pPrivateMemory == nullptr)
   {
-    m_pPrivateMemory = (uint8_t*)std::malloc(new_size);
-    std::memcpy(m_pPrivateMemory, m_pMemory, m_iSize);
+    uint8_t* new_memory = (uint8_t*)std::malloc(new_size);
+    if (new_memory == nullptr)
+    {
+      SetErrorState();
+      return;
+    }
+
+    std::memcpy(new_memory, m_pMemory, m_iSize);
+    m_pPrivateMemory = new_memory;
     m_pMemory = m_pPrivateMemory;
     m_iMemorySize = new_size;
   }
   else
   {
-    m_pPrivateMemory = m_pMemory = (uint8_t*)std::realloc(m_pPrivateMemory, new_size);
+    uint8_t* new_memory = (uint8_t*)std::realloc(m_pPrivateMemory, new_size);
+    if (new_memory == nullptr)
+    {
+      // original buffer is still valid and owned by m_pPrivateMemory
+      SetErrorState();
+      return;
+    }
+
+    m_pPrivateMemory = m_pMemory = new_memory;
     m_iMemorySize = new_size;
   }
 }
@@ -518,6 +538,9 @@ bool GrowableMemoryByteStream::WriteByte(uint8_t SourceByte)
   if (m_iPosition == m_iMemorySize)
     Grow(1);
 
+  if (m_errorState || m_pMemory == nullptr)
+    return false;
+
   m_pMemory[m_iPosition++] = SourceByte;
   m_iSize = std::max(m_iSize, m_iPosition);
   return true;
@@ -527,6 +550,9 @@ uint32_t GrowableMemoryByteStream::Write(const void* pSource, uint32_t ByteCount
 {
   if ((m_iPosition + ByteCount) > m_iMemorySize)
     Grow(ByteCount);
+
+  if (m_errorState || m_pMemory == nullptr)
+    return 0;
 
   std::memcpy(m_pMemory + m_iPosition, pSource, ByteCount);
   m_iPosition += ByteCount;
