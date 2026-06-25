@@ -189,6 +189,9 @@ public:
     else
       this->m_ptr = static_cast<T*>(std::malloc(sizeof(T) * CAPACITY));
 
+    if (this->m_ptr == nullptr)
+      std::abort();
+
     std::memset(this->m_ptr, 0, sizeof(T) * CAPACITY);
   }
 

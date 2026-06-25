@@ -396,7 +396,15 @@ void UpdateFastmemViews(CPUFastmemMode mode)
 #endif
 
   if (!m_fastmem_lut)
+  {
     m_fastmem_lut = static_cast<uint8_t**>(std::calloc(FASTMEM_LUT_NUM_SLOTS, sizeof(uint8_t*)));
+    if (!m_fastmem_lut)
+    {
+      // fastmem cannot function without its lookup table; fall back to disabled
+      m_fastmem_mode = CPUFastmemMode::Disabled;
+      return;
+    }
+  }
 
   auto MapRAM = [](uint32_t base_address) {
     for (uint32_t address = 0; address < g_ram_size; address += HOST_PAGE_SIZE)

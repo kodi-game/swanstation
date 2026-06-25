@@ -17,6 +17,8 @@ static String::StringData* StringDataAllocate(uint32_t allocSize)
 {
   String::StringData* pStringData =
     reinterpret_cast<String::StringData*>(std::malloc(sizeof(String::StringData) + allocSize));
+  if (pStringData == nullptr)
+    std::abort();
   pStringData->pBuffer = reinterpret_cast<char*>(pStringData + 1);
   pStringData->StringLength = 0;
   pStringData->BufferSize = allocSize;
@@ -81,7 +83,11 @@ static String::StringData* StringDataClone(const String::StringData* pStringData
 static String::StringData* StringDataReallocate(String::StringData* pStringData, uint32_t newSize)
 {
   // perform realloc
-  pStringData = reinterpret_cast<String::StringData*>(std::realloc(pStringData, sizeof(String::StringData) + newSize));
+  String::StringData* pNewStringData =
+    reinterpret_cast<String::StringData*>(std::realloc(pStringData, sizeof(String::StringData) + newSize));
+  if (pNewStringData == nullptr)
+    std::abort();
+  pStringData = pNewStringData;
   pStringData->pBuffer = reinterpret_cast<char*>(pStringData + 1);
 
   // zero bytes in debug
@@ -249,7 +255,14 @@ void String::FormatVA(const char* FormatString, std::va_list ArgPtr)
     if (ret < 0 || ((uint32_t)ret >= (currentBufferSize - 1)))
     {
       currentBufferSize *= 2;
-      pBuffer = pHeapBuffer = reinterpret_cast<char*>(std::realloc(pHeapBuffer, currentBufferSize));
+      char* pNewBuffer = reinterpret_cast<char*>(std::realloc(pHeapBuffer, currentBufferSize));
+      if (pNewBuffer == nullptr)
+      {
+        if (pHeapBuffer != NULL)
+          std::free(pHeapBuffer);
+        std::abort();
+      }
+      pBuffer = pHeapBuffer = pNewBuffer;
       continue;
     }
 
