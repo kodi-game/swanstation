@@ -61,8 +61,6 @@ bool FindFiles(const char* Path, const char* Pattern, uint32_t Flags, FindResult
 // open files
 std::unique_ptr<ByteStream> OpenFile(const char* FileName, uint32_t Flags);
 
-std::FILE* OpenCFile(const char* filename, const char* mode);
-
 std::optional<std::vector<uint8_t>> ReadBinaryFile(const char* filename);
 bool WriteBinaryFile(const char* filename, const void* data, size_t data_length);
 

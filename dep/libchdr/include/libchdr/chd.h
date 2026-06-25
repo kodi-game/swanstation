@@ -381,7 +381,7 @@ typedef chd_error (*chd_codec_interface_decompress)(void *codec, const uint8_t *
 /* open an existing CHD file */
 CHD_EXPORT chd_error chd_open_core_file_callbacks(const core_file_callbacks *callbacks, const void *user_data, int mode, chd_file *parent, chd_file **chd);
 CHD_EXPORT chd_error chd_open_core_file(core_file *file, int mode, chd_file *parent, chd_file **chd); /* Legacy; use chd_open_core_file_callbacks instead! */
-CHD_EXPORT chd_error chd_open_file(FILE *file, int mode, chd_file *parent, chd_file **chd);
+CHD_EXPORT chd_error chd_open_file(RFILE *file, int mode, chd_file *parent, chd_file **chd);
 CHD_EXPORT chd_error chd_open(const char *filename, int mode, chd_file *parent, chd_file **chd);
 
 /* precache underlying file */
@@ -406,7 +406,7 @@ CHD_EXPORT const chd_header *chd_get_header(chd_file *chd);
 /* read CHD header data from file into the pointed struct */
 CHD_EXPORT chd_error chd_read_header_core_file_callbacks(const core_file_callbacks *callback, const void *user_data, chd_header *header);
 CHD_EXPORT chd_error chd_read_header_core_file(core_file *file, chd_header *header); /* Legacy; use chd_read_header_core_file_callbacks instead! */
-CHD_EXPORT chd_error chd_read_header_file(FILE *file, chd_header *header);
+CHD_EXPORT chd_error chd_read_header_file(RFILE *file, chd_header *header);
 CHD_EXPORT chd_error chd_read_header(const char *filename, chd_header *header);
 
 

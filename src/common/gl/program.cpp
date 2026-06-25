@@ -1,8 +1,8 @@
 #include "program.h"
+#include "../byte_stream.h"
 #include "../log.h"
 #include "../string_util.h"
 #include <array>
-#include <fstream>
 Log_SetChannel(GL);
 
 namespace GL {
@@ -57,14 +57,16 @@ GLuint Program::CompileShader(GLenum type, const std::string_view source)
     {
       Log_ErrorPrintf("Shader failed to compile:\n%s", info_log.c_str());
 
-      std::ofstream ofs(StringUtil::StdStringFromFormat("bad_shader_%u.txt", s_next_bad_shader_id++).c_str(),
-                        std::ofstream::out | std::ofstream::binary);
-      if (ofs.is_open())
+      std::unique_ptr<ByteStream> ofs = ByteStream_OpenFileStream(
+        StringUtil::StdStringFromFormat("bad_shader_%u.txt", s_next_bad_shader_id++).c_str(),
+        BYTESTREAM_OPEN_CREATE | BYTESTREAM_OPEN_WRITE | BYTESTREAM_OPEN_TRUNCATE);
+      if (ofs)
       {
-        ofs.write(sources[0], source_lengths[0]);
-        ofs << "\n\nCompile failed, info log:\n";
-        ofs << info_log;
-        ofs.close();
+        ofs->Write(sources[0], static_cast<uint32_t>(source_lengths[0]));
+        static const char tail[] = "\n\nCompile failed, info log:\n";
+        ofs->Write(tail, sizeof(tail) - 1);
+        ofs->Write(info_log.c_str(), static_cast<uint32_t>(info_log.size()));
+        ofs->Commit();
       }
 
       glDeleteShader(id);

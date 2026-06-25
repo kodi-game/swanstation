@@ -2,11 +2,7 @@
 #define __CORETYPES_H__
 
 #include <stdint.h>
-#include <stdio.h>
-
-#ifdef USE_LIBRETRO_VFS
-#include <streams/file_stream_transforms.h>
-#endif
+#include <streams/file_stream.h>
 
 #include "macros.h"
 
