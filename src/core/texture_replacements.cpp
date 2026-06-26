@@ -223,18 +223,17 @@ const TextureReplacementTexture* TextureReplacements::LoadTexture(const std::str
 
 void TextureReplacements::PreloadTextures()
 {
-  static constexpr float UPDATE_INTERVAL = 1.0f;
-
-  Common::Timer last_update_time;
+  const Common::Timer::Value update_interval = Common::Timer::ConvertSecondsToValue(1.0);
+  Common::Timer::Value last_update_time = Common::Timer::GetValue();
   uint32_t num_textures_loaded = 0;
   const uint32_t total_textures = static_cast<uint32_t>(m_vram_write_replacements.size());
 
 #define UPDATE_PROGRESS()                                                                                              \
-  if (last_update_time.GetTimeSeconds() >= UPDATE_INTERVAL)                                                            \
+  if ((Common::Timer::GetValue() - last_update_time) >= update_interval)                                              \
   {                                                                                                                    \
     g_host_interface->DisplayLoadingScreen("Preloading replacement textures...", 0, static_cast<int>(total_textures),  \
                                            static_cast<int>(num_textures_loaded));                                     \
-    last_update_time.Reset();                                                                                          \
+    last_update_time = Common::Timer::GetValue();                                                                     \
   }
 
   for (const auto& it : m_vram_write_replacements)
