@@ -199,7 +199,11 @@ void GPUBackend::Sync(bool allow_sleep)
 
 void GPUBackend::RunGPULoop()
 {
-  static constexpr double SPIN_TIME_NS = 1 * 1000000;
+  // 1ms spin window before the GPU thread sleeps, expressed in the timer's
+  // native integer units (handles the Windows QPC tick scale via the same
+  // conversion). Comparing Values directly avoids a per-iteration trip
+  // through floating-point nanoseconds.
+  const Common::Timer::Value spin_time = Common::Timer::ConvertSecondsToValue(0.001);
   Common::Timer::Value last_command_time = 0;
 
   for (;;)
@@ -209,7 +213,7 @@ void GPUBackend::RunGPULoop()
     if (read_ptr == write_ptr)
     {
       const Common::Timer::Value current_time = Common::Timer::GetValue();
-      if (Common::Timer::ConvertValueToNanoseconds(current_time - last_command_time) < SPIN_TIME_NS)
+      if ((current_time - last_command_time) < spin_time)
         continue;
 
       std::unique_lock<std::mutex> lock(m_sync_mutex);
