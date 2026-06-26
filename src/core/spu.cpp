@@ -484,12 +484,20 @@ void SPU::WriteRegister(uint32_t offset, uint16_t value)
         m_SPUSTAT.irq9_flag = false;
       else if (IsRAMIRQTriggerable())
       {
+        // Only a transfer (DMA/manual) sitting exactly on the IRQ address fires
+        // immediately on irq9 enable. We must NOT additionally synthesize a voice
+        // RAM-IRQ here via CheckForLateRAMIRQs(): a voice parked on the IRQ address
+        // (e.g. a looping streaming voice on a dummy loop block) already fires the
+        // IRQ from its own block read on access, and re-firing it on every irq9
+        // enable double-counts, desyncing games that toggle irq9 to poll a
+        // streaming buffer. This hangs Shockwave Assault's in-game FMVs (#40):
+        // the spurious extra IRQ throws off the game's double-buffer bookkeeping
+        // so it stops refilling and spins forever waiting on an IRQ that already
+        // (wrongly) fired. The voice's own read still raises the IRQ correctly.
         if (CheckRAMIRQ(m_transfer_address))
         {
           SPU_TriggerRAMIRQ();
         }
-        else
-          CheckForLateRAMIRQs();
       }
 
       UpdateEventInterval();
