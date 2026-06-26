@@ -554,16 +554,17 @@ FLAGS   += -fvisibility=hidden
 CXXFLAGS += -fvisibility-inlines-hidden
 
 # Always-on libretro defines (this Makefile is libretro-only).
+# Note: the MINIZ_NO_* configuration (NO_STDIO/NO_TIME/NO_DEFLATE_APIS/
+# NO_ARCHIVE_APIS) is defined unconditionally in the vendored
+# dep/libchdr/deps/miniz-3.1.1/miniz.h, which is the single source of truth.
+# Don't pass them again on the command line or the compiler warns about
+# redefinition.
 FLAGS += \
    -DLIBRETRO=1 \
    -D__LIBRETRO__ \
    -D_FILE_OFFSET_BITS=64 \
    -DUSE_LIBRETRO_VFS \
    -DVIXL_CODE_BUFFER_MALLOC \
-   -DMINIZ_NO_ARCHIVE_APIS \
-   -DMINIZ_NO_DEFLATE_APIS \
-   -DMINIZ_NO_STDIO \
-   -DMINIZ_NO_TIME \
    -DGIT_VERSION='"$(GIT_VERSION)"' \
    -DGIT_HASH='"$(GIT_HASH)"' \
    -DBUILD_DATE='"$(BUILD_DATE)"'
