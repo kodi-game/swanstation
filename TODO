@@ -1,5 +1,4 @@
 List of things to be done, in no particular order:
-- Implement Libretro VFS
 - Implement touchscreen support for Namco GunCon (currently only works with mouse)
 - Implement Mouse "Ball Only" mode, like with FBNeo, allowing clicks to be mapped to controller buttons (useful for trackers and spinners)
 - Get Libretro rewind to work without having to disable the recompiler
