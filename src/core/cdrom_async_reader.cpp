@@ -1,6 +1,5 @@
 #include "cdrom_async_reader.h"
 #include "common/log.h"
-#include "common/timer.h"
 Log_SetChannel(CDROMAsyncReader);
 
 CDROMAsyncReader::CDROMAsyncReader() = default;
@@ -138,8 +137,6 @@ bool CDROMAsyncReader::WaitForReadToComplete()
   if (!m_next_position_set.load() && m_buffer_count.load() > 0)
     return m_buffers[m_buffer_front.load()].result;
 
-  Common::Timer wait_timer;
-
   std::unique_lock<std::mutex> lock(m_mutex);
   m_notify_read_complete_cv.wait(
     lock, [this]() { return (m_buffer_count.load() > 0 || m_seek_error.load()) && !m_next_position_set.load(); });
@@ -150,10 +147,6 @@ bool CDROMAsyncReader::WaitForReadToComplete()
   }
 
   const uint32_t front = m_buffer_front.load();
-  const double wait_time = wait_timer.GetTimeMilliseconds();
-  if (wait_time > 1.0f)
-    Log_WarningPrintf("Had to wait %.2f msec for LBA %u", wait_time, m_buffers[front].lba);
-
   return m_buffers[front].result;
 }
 
@@ -166,8 +159,6 @@ void CDROMAsyncReader::EmptyBuffers()
 
 bool CDROMAsyncReader::ReadSectorIntoBuffer(std::unique_lock<std::mutex>& lock)
 {
-  Common::Timer timer;
-
   const uint32_t slot = m_buffer_back.load();
   m_buffer_back.store((slot + 1) % static_cast<uint32_t>(m_buffers.size()));
 
@@ -187,8 +178,6 @@ bool CDROMAsyncReader::ReadSectorIntoBuffer(std::unique_lock<std::mutex>& lock)
 
 void CDROMAsyncReader::ReadSectorNonThreaded(CDImage::LBA lba)
 {
-  Common::Timer timer;
-
   m_buffers.resize(1);
   m_seek_error.store(false);
   EmptyBuffers();
