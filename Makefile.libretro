@@ -4,7 +4,7 @@
 # https://github.com/libretro/beetle-psx-libretro
 #
 # This Makefile is dedicated to building the libretro core only and
-# always assumes the libretro defines (LIBRETRO, __LIBRETRO__) are on.
+# always assumes the libretro defines (__LIBRETRO__) are on.
 # It is intended to coexist with the existing CMake build system; the
 # CMake build continues to work and is unaffected by this Makefile.
 #
@@ -560,10 +560,8 @@ CXXFLAGS += -fvisibility-inlines-hidden
 # Don't pass them again on the command line or the compiler warns about
 # redefinition.
 FLAGS += \
-   -DLIBRETRO=1 \
    -D__LIBRETRO__ \
    -D_FILE_OFFSET_BITS=64 \
-   -DUSE_LIBRETRO_VFS \
    -DVIXL_CODE_BUFFER_MALLOC \
    -DGIT_VERSION='"$(GIT_VERSION)"' \
    -DGIT_HASH='"$(GIT_HASH)"' \
