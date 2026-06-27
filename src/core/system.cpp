@@ -609,13 +609,16 @@ bool Boot(const SystemBootParameters& params)
       media = OpenCDImage(params.filename.c_str(), &error, params.load_image_to_ram, ShouldCheckForImagePatches());
       if (!media)
       {
-        g_host_interface->ReportFormattedError("Failed to load CD image '%s': %s", params.filename.c_str(),
-                                               error.GetCodeAndMessage().GetCharArray());
-        Shutdown();
-        return false;
+        // Couldn't open the image (corrupt, unsupported container, non-PSX
+        // disc, etc). Rather than refusing to start, fall back to booting the
+        // BIOS with no media inserted - the same as starting with no content.
+        // The failure is still surfaced as a warning so it isn't silent.
+        Log_WarningPrintf("Failed to load CD image '%s': %s. Booting BIOS with no disc.",
+                          params.filename.c_str(), error.GetCodeAndMessage().GetCharArray());
+        if (s_region == ConsoleRegion::Auto)
+          s_region = ConsoleRegion::NTSC_U;
       }
-
-      if (s_region == ConsoleRegion::Auto)
+      else if (s_region == ConsoleRegion::Auto)
       {
         const DiscRegion disc_region = GetRegionForImage(media.get());
         if (disc_region != DiscRegion::Other)
