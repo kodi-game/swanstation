@@ -263,6 +263,10 @@ void HostInterface::retro_set_environment()
   libretro_supports_option_categories = false;
   libretro_set_core_options(g_retro_environment_callback, &libretro_supports_option_categories);
 
+  // Allow the core to be started with no content, which boots into the BIOS.
+  bool support_no_game = true;
+  g_retro_environment_callback(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &support_no_game);
+
   retro_core_options_update_display_callback opts_update_display_cb = {UpdateCoreOptionsDisplayCallback};
   g_retro_environment_callback(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &opts_update_display_cb);
 
@@ -687,7 +691,11 @@ void HostInterface::ApplyGameSettings()
 bool HostInterface::retro_load_game(const struct retro_game_info* game)
 {
   std::shared_ptr<SystemBootParameters> bp = std::make_shared<SystemBootParameters>();
-  bp->filename = game->path;
+  // A null game (or null path) means the frontend started the core with no
+  // content; boot into the BIOS by leaving the filename empty. System::Boot
+  // already handles an empty filename as a BIOS boot.
+  if (game && game->path)
+    bp->filename = game->path;
   bp->media_playlist_index = P_THIS->m_disk_control_info.initial_image_index;
   bp->force_software_renderer = !m_hw_render_callback_valid;
 
