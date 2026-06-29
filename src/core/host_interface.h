@@ -231,7 +231,7 @@ private:
   // CRTC mode (e.g., NTSC <-> PAL). RETRO_ENVIRONMENT_SET_GEOMETRY only
   // updates the geometry struct and the frontend never learns about the
   // new fps; an audio resampler driven by the stale ratio drifts.
-  float m_last_throttle_frequency = 60.0f;
+  float m_last_vertical_frequency = 60.0f;
 
   std::array<uint32_t, NUM_CONTROLLER_AND_CARD_PORTS> retropad_device = {RETRO_DEVICE_JOYPAD};
 

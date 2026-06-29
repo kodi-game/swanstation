@@ -104,7 +104,7 @@ static std::string s_running_game_path;
 static std::string s_running_game_code;
 static std::string s_running_game_title;
 
-static float s_throttle_frequency = 60.0f;
+static float s_vertical_frequency = 60.0f;
 
 static std::unique_ptr<CheatList> s_cheat_list;
 
@@ -169,9 +169,9 @@ const std::string& GetRunningCode()
   return s_running_game_code;
 }
 
-float GetThrottleFrequency()
+float GetVerticalFrequency()
 {
-  return s_throttle_frequency;
+  return s_vertical_frequency;
 }
 
 /// Returns true if the filename is a PlayStation executable we can inject.
@@ -722,7 +722,7 @@ bool Initialize(bool force_software_renderer)
   s_max_slice_ticks = ScaleTicksToOverclock(MASTER_CLOCK / 10);
   s_frame_number = 1;
 
-  s_throttle_frequency = 60.0f;
+  s_vertical_frequency = 60.0f;
 
   TimingEvents::Initialize();
 
@@ -1201,9 +1201,9 @@ void RunFrame()
   DoRunFrame();
 }
 
-void SetThrottleFrequency(float frequency)
+void SetVerticalFrequency(float frequency)
 {
-  s_throttle_frequency = frequency;
+  s_vertical_frequency = frequency;
 }
 
 static bool LoadEXEToRAM(const char* filename, bool patch_bios)

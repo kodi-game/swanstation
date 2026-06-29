@@ -85,7 +85,7 @@ uint32_t GetFrameNumber();
 void FrameDone();
 
 const std::string& GetRunningCode();
-float GetThrottleFrequency();
+float GetVerticalFrequency();
 
 bool Boot(const SystemBootParameters& params);
 void Reset();
@@ -99,8 +99,11 @@ bool RecreateGPU(GPURenderer renderer, bool update_display = true);
 
 void RunFrame();
 
-/// Adjusts the throttle frequency, i.e. how many times we should sleep per second.
-void SetThrottleFrequency(float frequency);
+/// Sets the emulated vertical refresh rate (Hz). This is reported to the
+/// libretro frontend via retro_system_av_info.timing.fps so it can pace and
+/// resample audio correctly; the core itself does no frame throttling - the
+/// frontend drives pacing by calling retro_run().
+void SetVerticalFrequency(float frequency);
 
 // Access controllers for simulating input.
 Controller* GetController(uint32_t slot);

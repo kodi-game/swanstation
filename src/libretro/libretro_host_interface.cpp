@@ -565,9 +565,9 @@ void HostInterface::DisplayLoadingScreen(const char* message, int progress_min /
   retro_message legacy = {};
   legacy.msg = text;
   // SET_MESSAGE measures duration in frames; assume the
-  // ~60 fps NTSC throttle if the system isn't running yet (we're
+  // ~60 fps NTSC refresh rate if the system isn't running yet (we're
   // most often called from CompileShaders during boot, before
-  // System::GetThrottleFrequency() can return a real value).
+  // System::GetVerticalFrequency() can return a real value).
   legacy.frames = 60u;
   g_retro_environment_callback(RETRO_ENVIRONMENT_SET_MESSAGE, &legacy);
 }
@@ -580,7 +580,7 @@ void HostInterface::AddOSDMessage(std::string message, float duration /*= 2.0f*/
 
   retro_message msg = {};
   msg.msg = message.c_str();
-  msg.frames = static_cast<uint32_t>(duration * (System::IsShutdown() ? 60.0f : System::GetThrottleFrequency()));
+  msg.frames = static_cast<uint32_t>(duration * (System::IsShutdown() ? 60.0f : System::GetVerticalFrequency()));
   g_retro_environment_callback(RETRO_ENVIRONMENT_SET_MESSAGE, &msg);
 }
 
@@ -589,7 +589,7 @@ void HostInterface::retro_get_system_av_info(struct retro_system_av_info* info)
   const bool use_resolution_scale = (g_settings.gpu_renderer != GPURenderer::Software);
   GetSystemAVInfo(info, use_resolution_scale);
   m_last_aspect_ratio        = info->geometry.aspect_ratio;
-  m_last_throttle_frequency  = static_cast<float>(info->timing.fps);
+  m_last_vertical_frequency  = static_cast<float>(info->timing.fps);
 }
 
 void HostInterface::GetSystemAVInfo(struct retro_system_av_info* info, bool use_resolution_scale)
@@ -628,7 +628,7 @@ void HostInterface::GetSystemAVInfo(struct retro_system_av_info* info, bool use_
   info->geometry.max_width = VRAM_WIDTH * max_scale;
   info->geometry.max_height = VRAM_HEIGHT * max_scale;
 
-  info->timing.fps = (System::IsValid()) ? System::GetThrottleFrequency() : 60.0;
+  info->timing.fps = (System::IsValid()) ? System::GetVerticalFrequency() : 60.0;
   info->timing.sample_rate = static_cast<double>(LibretroAudioStream::SAMPLE_RATE);
 }
 
@@ -641,7 +641,7 @@ bool HostInterface::UpdateSystemAVInfo(bool use_resolution_scale)
 
   m_display->ResizeRenderWindow(avi.geometry.base_width, avi.geometry.base_height);
   m_last_aspect_ratio        = avi.geometry.aspect_ratio;
-  m_last_throttle_frequency  = static_cast<float>(avi.timing.fps);
+  m_last_vertical_frequency  = static_cast<float>(avi.timing.fps);
   return true;
 }
 
@@ -893,9 +893,9 @@ void HostInterface::retro_run_frame()
   // don't re-issue full av_info, the frontend keeps resampling audio
   // at the stale fps ratio and the audio drifts.
   const float aspect_ratio        = m_display->GetDisplayAspectRatio();
-  const float throttle_frequency  = (System::IsValid()) ? System::GetThrottleFrequency() : m_last_throttle_frequency;
+  const float vertical_frequency  = (System::IsValid()) ? System::GetVerticalFrequency() : m_last_vertical_frequency;
 
-  if (throttle_frequency != m_last_throttle_frequency)
+  if (vertical_frequency != m_last_vertical_frequency)
   {
     UpdateSystemAVInfo(g_settings.gpu_renderer != GPURenderer::Software);
   }

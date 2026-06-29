@@ -561,7 +561,7 @@ void GPU::UpdateCRTCConfig()
     static_cast<uint16_t>(System::ScaleTicksToOverclock(static_cast<TickCount>(cs.horizontal_display_end)));
   cs.horizontal_total = static_cast<uint16_t>(System::ScaleTicksToOverclock(static_cast<TickCount>(cs.horizontal_total)));
 
-  System::SetThrottleFrequency(ComputeVerticalFrequency());
+  System::SetVerticalFrequency(ComputeVerticalFrequency());
 
   UpdateCRTCDisplayParameters();
   UpdateCRTCTickEvent();
