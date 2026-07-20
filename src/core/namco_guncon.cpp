@@ -189,7 +189,13 @@ void NamcoGunCon::UpdatePosition()
 
   // 8MHz units for X = 44100*768*11/7 = 53222400 / 8000000 = 6.6528
   const double divider = static_cast<double>(g_gpu->GetCRTCFrequency()) / 8000000.0;
-  m_position_x = static_cast<uint16_t>(static_cast<float>(tick) / static_cast<float>(divider));
+  // Keep the divide in double (the divider is computed in double; narrowing
+  // both operands back to float threw that away) and round to nearest rather
+  // than truncating. This coordinate is the emulator's own host-mouse ->
+  // beam-position mapping, not a hardware register value being reproduced, so
+  // rounding is strictly closer to where the player is aiming. tick is
+  // non-negative and divider > 0, so + 0.5 is a correct round-half-up.
+  m_position_x = static_cast<uint16_t>((static_cast<double>(tick) / divider) + 0.5);
   m_position_y = static_cast<uint16_t>(line);
 }
 
