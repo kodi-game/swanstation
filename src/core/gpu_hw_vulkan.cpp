@@ -1246,7 +1246,19 @@ bool GPU_HW_Vulkan::CreateFramebuffer()
   const uint32_t texture_width = VRAM_WIDTH * m_resolution_scale;
   const uint32_t texture_height = VRAM_HEIGHT * m_resolution_scale;
   const VkFormat texture_format = VK_FORMAT_R8G8B8A8_UNORM;
-  const VkFormat depth_format = VK_FORMAT_D16_UNORM;
+  /* D32_SFLOAT rather than D16_UNORM: in PGXP depth-buffer mode the value
+   * written to this attachment is the reconstructed perspective W, carried at
+   * full float32 through the vertex path (a_pos is R32G32B32A32_SFLOAT) - a
+   * 16-bit UNORM depth quantizes exactly the precision PGXP exists to recover.
+   * D32_SFLOAT is lossless for the legacy ordered-depth path too and is a
+   * format the spec guarantees for depth-stencil attachment support, so no
+   * capability check is needed. Made unconditional (rather than keyed on the
+   * PGXP-depth setting) because a mid-session toggle recompiles shaders but
+   * does not set framebuffer_changed / recreate this texture. This also brings
+   * the actual depth format in line with the D32_SFLOAT sample-count query
+   * already used above for max-MSAA detection. The batch/VRAM-ops pipelines
+   * follow via the render passes below, which key off depth_format. */
+  const VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
   const VkSampleCountFlagBits samples = static_cast<VkSampleCountFlagBits>(m_multisamples);
 
   if (!m_vram_texture.Create(texture_width, texture_height, 1, 1, texture_format, samples, VK_IMAGE_VIEW_TYPE_2D,

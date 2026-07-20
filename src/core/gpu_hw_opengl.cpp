@@ -1050,8 +1050,15 @@ bool GPU_HW_OpenGL::CreateFramebuffer()
 
   if (!m_vram_texture.Create(texture_width, texture_height, multisamples, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, nullptr,
                              false, true) ||
-      !m_vram_depth_texture.Create(texture_width, texture_height, multisamples, GL_DEPTH_COMPONENT16,
-                                   GL_DEPTH_COMPONENT, GL_UNSIGNED_SHORT, nullptr, false) ||
+      /* DEPTH_COMPONENT32F rather than DEPTH_COMPONENT16: in PGXP depth-buffer
+       * mode the value written here is the reconstructed perspective W, carried
+       * at full float32 through the vertex path - a 16-bit depth quantizes
+       * exactly the precision PGXP exists to recover. Lossless for the legacy
+       * ordered-depth path too, and unconditional because a mid-session PGXP-
+       * depth toggle recompiles shaders without recreating this texture.
+       * DEPTH_COMPONENT32F is a core sized format on GL 3.0+ / GLES 3.0+. */
+      !m_vram_depth_texture.Create(texture_width, texture_height, multisamples, GL_DEPTH_COMPONENT32F,
+                                   GL_DEPTH_COMPONENT, GL_FLOAT, nullptr, false) ||
       !m_vram_read_texture.Create(texture_width, texture_height, 1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, nullptr, false,
                                   true) ||
       !m_vram_read_texture.CreateFramebuffer() ||

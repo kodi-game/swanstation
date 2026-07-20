@@ -787,7 +787,18 @@ bool GPU_HW_D3D12::CreateFramebuffer()
   const uint32_t texture_width = VRAM_WIDTH * m_resolution_scale;
   const uint32_t texture_height = VRAM_HEIGHT * m_resolution_scale;
   const DXGI_FORMAT texture_format = DXGI_FORMAT_R8G8B8A8_UNORM;
-  const DXGI_FORMAT depth_format = DXGI_FORMAT_D16_UNORM;
+  /* D32_FLOAT rather than D16_UNORM: in PGXP depth-buffer mode the value
+   * written to this attachment is the reconstructed perspective W, carried at
+   * full float32 through the vertex path (a_pos is R32G32B32A32_FLOAT) - a
+   * 16-bit UNORM depth quantizes exactly the precision PGXP exists to recover.
+   * D32_FLOAT is lossless for the legacy ordered-depth path too (the 16-bit
+   * counter's 0..1 range is trivially representable and ordering is preserved),
+   * so the format is made unconditional: a format conditional on the PGXP-depth
+   * setting would go stale on a mid-session toggle, since that toggle recompiles
+   * shaders but does not set framebuffer_changed / recreate this texture. The
+   * batch/VRAM-ops PSOs pick this up automatically via
+   * m_vram_depth_texture.GetFormat(). */
+  const DXGI_FORMAT depth_format = DXGI_FORMAT_D32_FLOAT;
 
   if (!m_vram_texture.Create(texture_width, texture_height, m_multisamples, texture_format, texture_format,
                              texture_format, DXGI_FORMAT_UNKNOWN, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET) ||
