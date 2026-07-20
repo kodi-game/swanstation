@@ -134,8 +134,17 @@ ALWAYS_INLINE_RELEASE void MaskValidate(PGXP_value* pV, uint32_t psxV, uint32_t 
 
 ALWAYS_INLINE_RELEASE double f16Sign(double in)
 {
-  uint32_t s = (uint32_t)(in * (double)((uint32_t)1 << 16));
-  return ((double)*((int32_t*)&s)) / (double)((int32_t)1 << 16);
+  /* Scale to 16.16, keep the low 32 bits (mod 2^32), then reinterpret those
+   * bits as signed - this models the 32-bit register wrap that re-applies the
+   * sign after f16Unsign. Routing the double->integer narrowing through
+   * int64_t makes it well-defined over the operating range: the old
+   * (uint32_t)(double) cast was UB for negative / out-of-range operands (on
+   * x86 it yields the 0x80000000 "integer indefinite" for magnitudes >= 2^31),
+   * and static_cast<int32_t> on the low word replaces the (int32_t*)&s
+   * type-pun, which violated strict aliasing. */
+  const int64_t scaled = static_cast<int64_t>(in * 65536.0);
+  const uint32_t bits = static_cast<uint32_t>(static_cast<uint64_t>(scaled) & UINT32_C(0xFFFFFFFF));
+  return static_cast<double>(static_cast<int32_t>(bits)) / 65536.0;
 }
 ALWAYS_INLINE_RELEASE double f16Unsign(double in)
 {
@@ -233,23 +242,26 @@ ALWAYS_INLINE_RELEASE void WriteMem(const PGXP_value* value, uint32_t addr)
 ALWAYS_INLINE_RELEASE static void WriteMem16(const PGXP_value* src, uint32_t addr)
 {
   PGXP_value* dest = GetPtr(addr);
-  psx_value* pVal = NULL;
 
   if (dest)
   {
-    pVal = (psx_value*)&dest->value;
-    // determine if high or low word
+    /* determine if high or low word. Writing the half through explicit shift/
+     * mask on dest->value rather than aliasing it as a psx_value* (a union of
+     * a different type) avoids the strict-aliasing violation; the result is
+     * identical to the little-endian w.l / w.h union writes on all supported
+     * targets and endianness-independent besides. */
+    const uint16_t half = static_cast<uint16_t>(src->value);
     if ((addr % 4) == 2)
     {
       dest->y = src->x;
       dest->compFlags[1] = src->compFlags[0];
-      pVal->w.h = (uint16_t)src->value;
+      dest->value = (dest->value & UINT32_C(0x0000FFFF)) | (static_cast<uint32_t>(half) << 16);
     }
     else
     {
       dest->x = src->x;
       dest->compFlags[0] = src->compFlags[0];
-      pVal->w.l = (uint16_t)src->value;
+      dest->value = (dest->value & UINT32_C(0xFFFF0000)) | static_cast<uint32_t>(half);
     }
 
     // overwrite z/w if valid
