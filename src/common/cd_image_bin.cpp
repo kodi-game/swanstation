@@ -4,6 +4,7 @@
 #include "file_system.h"
 #include "log.h"
 #include <cerrno>
+#include <cstring>
 Log_SetChannel(CDImageBin);
 
 class CDImageBin : public CDImage
@@ -23,6 +24,8 @@ protected:
 private:
   RFILE* m_fp = nullptr;
   uint64_t m_file_position = 0;
+  const uint8_t* m_map = nullptr;
+  int64_t m_map_size = 0;
 
   CDSubChannelReplacement m_sbi;
 };
@@ -38,7 +41,7 @@ CDImageBin::~CDImageBin()
 bool CDImageBin::Open(const char* filename, Common::Error* error)
 {
   m_filename = filename;
-  m_fp = FileSystem::OpenRFile(filename, "rb");
+  m_fp = FileSystem::OpenMappableRFile(filename);
   if (!m_fp)
   {
     Log_ErrorPrintf("Failed to open binfile '%s': errno %d", filename, errno);
@@ -51,6 +54,15 @@ bool CDImageBin::Open(const char* filename, Common::Error* error)
   rfseek(m_fp, 0, SEEK_END);
   const uint32_t file_size = static_cast<uint32_t>(rftell(m_fp));
   rfseek(m_fp, 0, SEEK_SET);
+
+  // Sector reads become a memcpy out of the whole-file mapping when
+  // the platform granted one; nullptr keeps the seek+read path.
+  m_map = FileSystem::GetMappedView(m_fp, &m_map_size);
+  if (m_map && m_map_size < static_cast<int64_t>(file_size))
+  {
+    m_map = nullptr;
+    m_map_size = 0;
+  }
 
   m_lba_count = file_size / track_sector_size;
 
@@ -113,6 +125,17 @@ bool CDImageBin::HasNonStandardSubchannel() const
 bool CDImageBin::ReadSectorFromIndex(void* buffer, const Index& index, LBA lba_in_index)
 {
   const uint64_t file_position = index.file_offset + (static_cast<uint64_t>(lba_in_index) * index.file_sector_size);
+
+  if (m_map)
+  {
+    if (file_position > static_cast<uint64_t>(m_map_size) ||
+        index.file_sector_size > (static_cast<uint64_t>(m_map_size) - file_position))
+      return false;
+
+    std::memcpy(buffer, m_map + file_position, index.file_sector_size);
+    return true;
+  }
+
   if (m_file_position != file_position)
   {
     if (rfseek(m_fp, static_cast<long>(file_position), SEEK_SET) != 0)

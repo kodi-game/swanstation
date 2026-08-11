@@ -439,9 +439,13 @@ SOURCES_C += \
    $(LIBRETRO_COMM_DIR)/encodings/encoding_utf.c \
    $(LIBRETRO_COMM_DIR)/file/file_path.c \
    $(LIBRETRO_COMM_DIR)/file/file_path_io.c \
+   $(LIBRETRO_COMM_DIR)/file/retro_dirent.c \
+   $(LIBRETRO_COMM_DIR)/formats/data_transfer.c \
+   $(LIBRETRO_COMM_DIR)/memmap/memmap.c \
    $(LIBRETRO_COMM_DIR)/streams/file_stream.c \
    $(LIBRETRO_COMM_DIR)/string/stdstring.c \
    $(LIBRETRO_COMM_DIR)/time/rtime.c \
+   $(LIBRETRO_COMM_DIR)/vfs/vfs_hybrid.c \
    $(LIBRETRO_COMM_DIR)/vfs/vfs_implementation.c
 
 # ---------------------------------------------------------------------
@@ -566,6 +570,14 @@ FLAGS += \
    -DGIT_VERSION='"$(GIT_VERSION)"' \
    -DGIT_HASH='"$(GIT_HASH)"' \
    -DBUILD_DATE='"$(BUILD_DATE)"'
+
+# File mapping backs RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS (and
+# filestream_get_mapped_ptr): mmap() on POSIX platforms, CreateFileMapping
+# on Windows (automatic under _WIN32, no define needed).  Mirrors the
+# `if(NOT WIN32)` block in dep/libretro-common/CMakeLists.txt.
+ifneq ($(IS_WINDOWS),1)
+   FLAGS += -DHAVE_MMAP
+endif
 
 # Recompiler / fastmem flags - only when the host CPU has a JIT backend.
 ifeq ($(WITH_RECOMPILER),1)

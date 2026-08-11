@@ -588,6 +588,19 @@ bool FindFiles(const char* Path, const char* Pattern, uint32_t Flags, FindResult
   return (RecursiveFindFiles(Path, nullptr, nullptr, Pattern, Flags, pResults) > 0);
 }
 
+RFILE* OpenMappableRFile(const char* filename)
+{
+   return filestream_open(filename, RETRO_VFS_FILE_ACCESS_READ,
+         RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS);
+}
+
+const uint8_t* GetMappedView(RFILE* fp, int64_t* size)
+{
+   if (!fp)
+      return nullptr;
+   return filestream_get_mapped_ptr(fp, size);
+}
+
 RFILE* OpenRFile(const char *filename, const char *mode)
 {
    RFILE          *output  = NULL;

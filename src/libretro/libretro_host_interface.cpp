@@ -32,6 +32,7 @@
 #include <compat/strl.h>
 #include <file/file_path.h>
 #include <streams/file_stream.h>
+#include <vfs/vfs_hybrid.h>
 
 Log_SetChannel(HostInterface);
 
@@ -156,15 +157,21 @@ RETRO_API size_t retro_get_memory_size(unsigned id)
 
 RETRO_API void retro_set_environment(retro_environment_t f)
 {
-  struct retro_vfs_interface_info vfs_iface_info;
+  struct retro_log_callback log_cb;
   g_retro_environment_callback = f;
   g_host_interface_storage.retro_set_environment();
 
-  vfs_iface_info.required_interface_version = 1;
-  vfs_iface_info.iface                      = NULL;
-  if (g_retro_environment_callback(RETRO_ENVIRONMENT_GET_VFS_INTERFACE,
-			  &vfs_iface_info))
-	  filestream_vfs_init(&vfs_iface_info);
+  // Local-first VFS dispatch with frontend fallback (VFS API v4,
+  // degrading to v3/v1 frontends automatically): local files keep a
+  // real fd and stay mappable (RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS /
+  // filestream_get_mapped_ptr), while URI-shaped paths - and, on
+  // sandboxed platforms, local open failures - fall through to the
+  // frontend interface.  Replaces the wholesale filestream_vfs_init()
+  // pattern, which routed every read through the frontend and made
+  // mappings unreachable.  No-op when the frontend has no VFS.
+  log_cb.log = NULL;
+  g_retro_environment_callback(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &log_cb);
+  vfs_hybrid_init(g_retro_environment_callback, log_cb.log);
 }
 
 RETRO_API void retro_set_video_refresh(retro_video_refresh_t f)

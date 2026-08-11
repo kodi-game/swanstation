@@ -65,6 +65,22 @@ std::optional<std::vector<uint8_t>> ReadBinaryFile(const char* filename);
 bool WriteBinaryFile(const char* filename, const void* data, size_t data_length);
 
 RFILE *OpenRFile(const char* filename, const char* mode);
+
+/// Read-only open that asks the VFS for a memory mapping
+/// (RETRO_VFS_FILE_ACCESS_HINT_FREQUENT_ACCESS).  The hint is exactly
+/// that: on platforms without mapping support, for frontend-backed
+/// (URI) handles, or when the map fails (e.g. >SIZE_MAX on 32-bit),
+/// the handle silently degrades to a plain descriptor and all the
+/// usual read/seek calls keep working.  Use GetMappedView() to find
+/// out which one you got.
+RFILE* OpenMappableRFile(const char* filename);
+
+/// Borrowed read-only view of the whole file when the handle is
+/// memory-mapped, else nullptr with *size untouched.  Owned by the
+/// handle; valid until rfclose().  Callers must keep their ordinary
+/// read path - nullptr is a normal answer, not an error.
+const uint8_t* GetMappedView(RFILE* fp, int64_t* size);
+
 int64_t FSeek64(RFILE* fp, int64_t offset, int whence);
 int64_t FTell64(RFILE* fp);
 std::optional<std::string> ReadFileToString(RFILE* fp);

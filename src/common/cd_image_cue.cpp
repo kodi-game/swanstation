@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cinttypes>
+#include <cstring>
 #include <map>
 Log_SetChannel(CDImageCueSheet);
 
@@ -30,6 +31,10 @@ private:
     std::string filename;
     RFILE* file;
     uint64_t file_position;
+    // Whole-file view when the platform mapped the track file;
+    // nullptr keeps the seek+read path.
+    const uint8_t* map;
+    int64_t map_size;
   };
 
   std::vector<TrackFile> m_files;
@@ -87,13 +92,13 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Common::Error* error)
       const std::string track_full_filename(!FileSystem::IsAbsolutePath(track_filename) ?
                                               FileSystem::BuildRelativePath(m_filename, track_filename) :
                                               track_filename);
-      RFILE* track_fp = FileSystem::OpenRFile(track_full_filename.c_str(), "rb");
+      RFILE* track_fp = FileSystem::OpenMappableRFile(track_full_filename.c_str());
       if (!track_fp && track_file_index == 0)
       {
         // many users have bad cuesheets, or they're renamed the files without updating the cuesheet.
         // so, try searching for a bin with the same name as the cue, but only for the first referenced file.
         const std::string alternative_filename(FileSystem::ReplaceExtension(filename, "bin"));
-        track_fp = FileSystem::OpenRFile(alternative_filename.c_str(), "rb");
+        track_fp = FileSystem::OpenMappableRFile(alternative_filename.c_str());
         if (track_fp)
         {
           Log_WarningPrintf("Your cue sheet references an invalid file '%s', but this was found at '%s' instead.",
@@ -114,7 +119,9 @@ bool CDImageCueSheet::OpenAndParse(const char* filename, Common::Error* error)
         return false;
       }
 
-      m_files.push_back(TrackFile{std::move(track_filename), track_fp, 0});
+      TrackFile new_tf{std::move(track_filename), track_fp, 0, nullptr, 0};
+      new_tf.map = FileSystem::GetMappedView(track_fp, &new_tf.map_size);
+      m_files.push_back(std::move(new_tf));
     }
 
     // data type determines the sector size
@@ -305,6 +312,17 @@ bool CDImageCueSheet::ReadSectorFromIndex(void* buffer, const Index& index, LBA 
 {
   TrackFile& tf = m_files[index.file_index];
   const uint64_t file_position = index.file_offset + (static_cast<uint64_t>(lba_in_index) * index.file_sector_size);
+
+  if (tf.map)
+  {
+    if (file_position > static_cast<uint64_t>(tf.map_size) ||
+        index.file_sector_size > (static_cast<uint64_t>(tf.map_size) - file_position))
+      return false;
+
+    std::memcpy(buffer, tf.map + file_position, index.file_sector_size);
+    return true;
+  }
+
   if (tf.file_position != file_position)
   {
     if (rfseek(tf.file, static_cast<long>(file_position), SEEK_SET) != 0)

@@ -2,6 +2,7 @@
 #include "cd_subchannel_replacement.h"
 #include "file_system.h"
 #include "log.h"
+#include <formats/data_transfer.h>
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
@@ -29,10 +30,10 @@ protected:
   bool ReadSectorFromIndex(void* buffer, const Index& index, LBA lba_in_index) override;
 
 private:
-  bool ReadV1Patch(RFILE* fp);
-  bool ReadV2Patch(RFILE* fp);
-  bool ReadV3Patch(RFILE* fp);
-  uint32_t ReadFileIDDiz(RFILE* fp, uint32_t version);
+  bool ReadV1Patch(const uint8_t* data, uint32_t len);
+  bool ReadV2Patch(const uint8_t* data, uint32_t len);
+  bool ReadV3Patch(const uint8_t* data, uint32_t len);
+  uint32_t ReadFileIDDiz(const uint8_t* data, uint32_t len, uint32_t version);
 
   bool AddPatch(uint64_t offset, const uint8_t* patch, uint32_t patch_size);
 
@@ -48,20 +49,43 @@ CDImagePPF::~CDImagePPF() = default;
 
 bool CDImagePPF::Open(const char* filename, std::unique_ptr<CDImage> parent_image)
 {
-  RFILE *fp = FileSystem::OpenRFile(filename, "rb");
-  if (!fp)
+  // A PPF is thousands of 5-9 byte entry headers followed by short
+  // payloads; parsed through the stream API that was three unbuffered
+  // VFS reads per entry.  Pull the whole patch through a
+  // data_transfer prefix instead - one open, a few large reads - and
+  // parse from the base pointer with explicit bounds.  The transfer
+  // reports a short file as failure with an honest byte count rather
+  // than as completion, and on reserve-capable platforms the
+  // uncommitted tail past avail() is hardware-protected, so a parser
+  // overrun faults instead of consuming garbage.
+  data_transfer_t* dt = data_transfer_open_prefix(filename, 0);
+  if (!dt)
   {
     Log_ErrorPrintf("Failed to open '%s'", filename);
     return false;
   }
 
-  uint32_t magic;
-  if (rfread(&magic, sizeof(magic), 1, fp) != 1)
+  data_transfer_iterate(dt, 0);
+  if (!data_transfer_complete(dt))
   {
-    Log_ErrorPrintf("Failed to read magic from '%s'", filename);
-    rfclose(fp);
+    Log_ErrorPrintf("Failed to read '%s'", filename);
+    data_transfer_free(dt);
     return false;
   }
+
+  size_t data_len_sz = 0;
+  const uint8_t* data = data_transfer_ptr(dt, &data_len_sz);
+  if (!data || data_len_sz < sizeof(uint32_t) || data_len_sz > UINT32_MAX)
+  {
+    Log_ErrorPrintf("Invalid ppf file '%s'", filename);
+    data_transfer_free(dt);
+    return false;
+  }
+
+  const uint32_t data_len = static_cast<uint32_t>(data_len_sz);
+
+  uint32_t magic;
+  std::memcpy(&magic, data, sizeof(magic));
 
   // work out the offset from the start of the parent image which we need to patch
   // i.e. the two second implicit pregap on data sectors
@@ -74,155 +98,119 @@ bool CDImagePPF::Open(const char* filename, std::unique_ptr<CDImage> parent_imag
   m_indices = parent_image->GetIndices();
   m_parent_image = std::move(parent_image);
 
+  bool result = false;
   if (magic == 0x33465050) // PPF3
-  {
-    if (ReadV3Patch(fp))
-    {
-	    rfclose(fp);
-	    return true;
-    }
-  }
+    result = ReadV3Patch(data, data_len);
   else if (magic == 0x32465050) // PPF2
-  {
-   if (ReadV2Patch(fp))
-   {
-	    rfclose(fp);
-	    return true;
-   }
-  }
+    result = ReadV2Patch(data, data_len);
   else if (magic == 0x31465050) // PPF1
-  {
-    if (ReadV1Patch(fp))
-    {
-	    rfclose(fp);
-	    return true;
-    }
-  }
+    result = ReadV1Patch(data, data_len);
+  else
+    Log_ErrorPrintf("Unknown PPF magic %08X", magic);
 
-  Log_ErrorPrintf("Unknown PPF magic %08X", magic);
-  rfclose(fp);
-  return false;
+  data_transfer_free(dt);
+  return result;
 }
 
-uint32_t CDImagePPF::ReadFileIDDiz(RFILE* fp, uint32_t version)
+uint32_t CDImagePPF::ReadFileIDDiz(const uint8_t* data, uint32_t len, uint32_t version)
 {
-  const int lenidx = (version == 2) ? 4 : 2;
+  const uint32_t lenidx = (version == 2) ? 4 : 2;
 
-  uint32_t magic;
-  if (rfseek(fp, -(lenidx + 4), SEEK_END) != 0 || rfread(&magic, sizeof(magic), 1, fp) != 1)
+  uint32_t magic = 0;
+  if (len < (lenidx + 4))
   {
     Log_WarningPrintf("Failed to read diz magic");
     return 0;
   }
+  std::memcpy(&magic, &data[len - (lenidx + 4)], sizeof(magic));
 
   if (magic != 0x5A49442E) // .DIZ
     return 0;
 
   uint32_t dlen = 0;
-  if (rfseek(fp, -lenidx, SEEK_END) != 0 || rfread(&dlen, lenidx, 1, fp) != 1)
-  {
-    Log_WarningPrintf("Failed to read diz length");
-    return 0;
-  }
+  std::memcpy(&dlen, &data[len - lenidx], lenidx);
 
-  if (dlen > static_cast<uint32_t>(rftell(fp)))
+  if (dlen > len)
   {
     Log_WarningPrintf("diz length out of range");
     return 0;
   }
 
-  std::string fdiz;
-  fdiz.resize(dlen);
-  if (rfseek(fp, -(lenidx + 16 + static_cast<int>(dlen)), SEEK_END) != 0 ||
-      rfread(fdiz.data(), 1, dlen, fp) != dlen)
+  const uint32_t diz_tail = lenidx + 16 + dlen;
+  if (diz_tail > len)
   {
     Log_WarningPrintf("Failed to read fdiz");
     return 0;
   }
 
+  std::string fdiz(reinterpret_cast<const char*>(&data[len - diz_tail]), dlen);
   Log_InfoPrintf("File_Id.diz: %s", fdiz.c_str());
   return dlen;
 }
 
-bool CDImagePPF::ReadV1Patch(RFILE* fp)
+bool CDImagePPF::ReadV1Patch(const uint8_t* data, uint32_t len)
 {
-  uint32_t filelen;
   char desc[DESC_SIZE + 1] = {};
-  if (rfseek(fp, 6, SEEK_SET) != 0 || rfread(desc, sizeof(char), DESC_SIZE, fp) != DESC_SIZE)
-  {
-    Log_ErrorPrintf("Failed to read description");
-    return false;
-  }
-
-  if (rfseek(fp, 0, SEEK_END) != 0 || (filelen = static_cast<uint32_t>(rftell(fp))) == 0 || filelen < 56)
+  if (len < 56)
   {
     Log_ErrorPrintf("Invalid ppf file");
     return false;
   }
+  std::memcpy(desc, &data[6], DESC_SIZE);
 
-  uint32_t count = filelen - 56;
-  if (count <= 0)
+  uint32_t count = len - 56;
+  if (count == 0)
     return false;
 
-  if (rfseek(fp, 56, SEEK_SET) != 0)
-    return false;
-
-  std::vector<uint8_t> temp;
+  uint32_t pos = 56;
   while (count > 0)
   {
     uint32_t offset;
     uint8_t chunk_size;
-    if (   rfread(&offset, sizeof(offset), 1, fp) != 1 
-	|| rfread(&chunk_size, sizeof(chunk_size), 1, fp) != 1)
+    if (count < (sizeof(offset) + sizeof(chunk_size)))
     {
       Log_ErrorPrintf("Incomplete ppf");
       return false;
     }
 
-    temp.resize(chunk_size);
-    if (rfread(temp.data(), 1, chunk_size, fp) != chunk_size)
+    std::memcpy(&offset, &data[pos], sizeof(offset));
+    chunk_size = data[pos + sizeof(offset)];
+    pos += sizeof(offset) + sizeof(chunk_size);
+    count -= sizeof(offset) + sizeof(chunk_size);
+
+    if (count < chunk_size)
     {
       Log_ErrorPrintf("Failed to read patch data");
       return false;
     }
 
-    if (!AddPatch(offset, temp.data(), chunk_size))
+    if (!AddPatch(offset, &data[pos], chunk_size))
       return false;
 
-    count -= sizeof(offset) + sizeof(chunk_size) + chunk_size;
+    pos += chunk_size;
+    count -= chunk_size;
   }
 
   Log_InfoPrintf("Loaded %zu replacement sectors from version 1 PPF", m_replacement_map.size());
   return true;
 }
 
-bool CDImagePPF::ReadV2Patch(RFILE* fp)
+bool CDImagePPF::ReadV2Patch(const uint8_t* data, uint32_t len)
 {
   uint32_t origlen;
   char desc[DESC_SIZE + 1] = {};
-  if (rfseek(fp, 6, SEEK_SET) != 0 || rfread(desc, sizeof(char), DESC_SIZE, fp) != DESC_SIZE)
+  if (len < 1084)
   {
-    Log_ErrorPrintf("Failed to read description");
+    Log_ErrorPrintf("Invalid ppf file");
     return false;
   }
+  std::memcpy(desc, &data[6], DESC_SIZE);
 
   Log_InfoPrintf("Patch description: %s", desc);
 
-  const uint32_t idlen = ReadFileIDDiz(fp, 2);
+  const uint32_t idlen = ReadFileIDDiz(data, len, 2);
 
-  if (rfseek(fp, 56, SEEK_SET) != 0 || rfread(&origlen, sizeof(origlen), 1, fp) != 1)
-  {
-    Log_ErrorPrintf("Failed to read size");
-    return false;
-  }
-
-  std::vector<uint8_t> temp;
-  temp.resize(BLOCKCHECK_SIZE);
-  if (rfread(temp.data(), 1, BLOCKCHECK_SIZE, fp) != BLOCKCHECK_SIZE)
-  {
-    Log_ErrorPrintf("Failed to read blockcheck data");
-    return false;
-  }
+  std::memcpy(&origlen, &data[56], sizeof(origlen));
 
   // do blockcheck
   {
@@ -232,7 +220,7 @@ bool CDImagePPF::ReadV2Patch(RFILE* fp)
     std::vector<uint8_t> src_sector(RAW_SECTOR_SIZE);
     if (m_parent_image->Seek(blockcheck_src_sector) && m_parent_image->ReadRawSector(src_sector.data(), nullptr))
     {
-      if (std::memcmp(&src_sector[blockcheck_src_offset], temp.data(), BLOCKCHECK_SIZE) != 0)
+      if (std::memcmp(&src_sector[blockcheck_src_offset], &data[60], BLOCKCHECK_SIZE) != 0)
         Log_WarningPrintf("Blockcheck failed. The patch may not apply correctly.");
     }
     else
@@ -241,77 +229,72 @@ bool CDImagePPF::ReadV2Patch(RFILE* fp)
     }
   }
 
-  uint32_t filelen;
-  if (rfseek(fp, 0, SEEK_END) != 0 || (filelen = static_cast<uint32_t>(rftell(fp))) == 0 || filelen < 1084)
+  uint32_t count = len - 1084;
+  if (idlen > 0)
   {
-    Log_ErrorPrintf("Invalid ppf file");
-    return false;
+    if ((idlen + 38) > count)
+    {
+      Log_ErrorPrintf("File is too short (diz)");
+      return false;
+    }
+    count -= (idlen + 38);
   }
 
-  uint32_t count = filelen - 1084;
-  if (idlen > 0)
-    count -= (idlen + 38);
-
-  if (count <= 0)
+  if (count == 0)
     return false;
 
-  if (rfseek(fp, 1084, SEEK_SET) != 0)
-    return false;
-
+  uint32_t pos = 1084;
   while (count > 0)
   {
     uint32_t offset;
     uint8_t chunk_size;
-    if (rfread(&offset, sizeof(offset), 1, fp) != 1 || rfread(&chunk_size, sizeof(chunk_size), 1, fp) != 1)
+    if (count < (sizeof(offset) + sizeof(chunk_size)))
     {
       Log_ErrorPrintf("Incomplete ppf");
       return false;
     }
 
-    temp.resize(chunk_size);
-    if (rfread(temp.data(), 1, chunk_size, fp) != chunk_size)
+    std::memcpy(&offset, &data[pos], sizeof(offset));
+    chunk_size = data[pos + sizeof(offset)];
+    pos += sizeof(offset) + sizeof(chunk_size);
+    count -= sizeof(offset) + sizeof(chunk_size);
+
+    if (count < chunk_size)
     {
       Log_ErrorPrintf("Failed to read patch data");
       return false;
     }
 
-    if (!AddPatch(offset, temp.data(), chunk_size))
+    if (!AddPatch(offset, &data[pos], chunk_size))
       return false;
 
-    count -= sizeof(offset) + sizeof(chunk_size) + chunk_size;
+    pos += chunk_size;
+    count -= chunk_size;
   }
 
   Log_InfoPrintf("Loaded %zu replacement sectors from version 2 PPF", m_replacement_map.size());
   return true;
 }
 
-bool CDImagePPF::ReadV3Patch(RFILE* fp)
+bool CDImagePPF::ReadV3Patch(const uint8_t* data, uint32_t len)
 {
   char desc[DESC_SIZE + 1] = {};
-  if (rfseek(fp, 6, SEEK_SET) != 0 || rfread(desc, sizeof(char), DESC_SIZE, fp) != DESC_SIZE)
-  {
-    Log_ErrorPrintf("Failed to read description");
-    return false;
-  }
-
-  Log_InfoPrintf("Patch description: %s", desc);
-
-  uint32_t idlen = ReadFileIDDiz(fp, 3);
-
-  uint8_t image_type;
-  uint8_t block_check;
-  uint8_t undo;
-  if (rfseek(fp, 56, SEEK_SET) != 0 || rfread(&image_type, sizeof(image_type), 1, fp) != 1 ||
-      rfread(&block_check, sizeof(block_check), 1, fp) != 1 || rfread(&undo, sizeof(undo), 1, fp) != 1)
+  if (len < 59)
   {
     Log_ErrorPrintf("Failed to read headers");
     return false;
   }
+  std::memcpy(desc, &data[6], DESC_SIZE);
+
+  Log_InfoPrintf("Patch description: %s", desc);
+
+  uint32_t idlen = ReadFileIDDiz(data, len, 3);
+
+  const uint8_t block_check = data[57];
 
   // TODO: Blockcheck
 
-  rfseek(fp, 0, SEEK_END);
-  uint32_t count = static_cast<uint32_t>(rftell(fp));
+  uint32_t count = len;
 
   uint32_t seekpos = (block_check) ? 1084 : 60;
   if (seekpos >= count)
@@ -333,32 +316,33 @@ bool CDImagePPF::ReadV3Patch(RFILE* fp)
     count -= extralen;
   }
 
-  if (rfseek(fp, seekpos, SEEK_SET) != 0)
-    return false;
-
-  std::vector<uint8_t> temp;
-
+  uint32_t pos = seekpos;
   while (count > 0)
   {
     uint64_t offset;
     uint8_t chunk_size;
-    if (rfread(&offset, sizeof(offset), 1, fp) != 1 || rfread(&chunk_size, sizeof(chunk_size), 1, fp) != 1)
+    if (count < (sizeof(offset) + sizeof(chunk_size)))
     {
       Log_ErrorPrintf("Incomplete ppf");
       return false;
     }
 
-    temp.resize(chunk_size);
-    if (rfread(temp.data(), 1, chunk_size, fp) != chunk_size)
+    std::memcpy(&offset, &data[pos], sizeof(offset));
+    chunk_size = data[pos + sizeof(offset)];
+    pos += sizeof(offset) + sizeof(chunk_size);
+    count -= sizeof(offset) + sizeof(chunk_size);
+
+    if (count < chunk_size)
     {
       Log_ErrorPrintf("Failed to read patch data");
       return false;
     }
 
-    if (!AddPatch(offset, temp.data(), chunk_size))
+    if (!AddPatch(offset, &data[pos], chunk_size))
       return false;
 
-    count -= sizeof(offset) + sizeof(chunk_size) + chunk_size;
+    pos += chunk_size;
+    count -= chunk_size;
   }
 
   Log_InfoPrintf("Loaded %zu replacement sectors from version 3 PPF", m_replacement_map.size());
