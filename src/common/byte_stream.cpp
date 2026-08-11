@@ -149,6 +149,10 @@ public:
     if (m_errorState)
       return false;
 
+    // Closed (post-commit) streams have nothing left to flush.
+    if (!m_pFile)
+      return true;
+
     if (filestream_flush(m_pFile) != 0)
     {
       m_errorState = true;
@@ -163,6 +167,18 @@ public:
   virtual bool Discard() override { return false; }
 
 protected:
+  /// Close the underlying handle early (idempotent).  Windows cannot
+  /// rename or delete a file that is held open by a handle without
+  /// FILE_SHARE_DELETE - which is what the VFS-opened handle is - so
+  /// the atomic-update commit path must close before renaming.  The
+  /// rf* wrappers are null-safe, so subsequent stream calls degrade
+  /// to errors rather than crashes.
+  void CloseFile()
+  {
+    rfclose(m_pFile);
+    m_pFile = nullptr;
+  }
+
   RFILE* m_pFile;
 };
 
@@ -179,31 +195,55 @@ public:
   {
     if (m_discarded)
     {
-      // delete the temporary file
-      if (remove(m_temporaryFileName.c_str()) < 0) { }
+      // The handle must be closed before the temporary file can be
+      // deleted on Windows (no FILE_SHARE_DELETE on VFS handles).
+      CloseFile();
+      filestream_delete(m_temporaryFileName.c_str());
     }
     else if (!m_committed)
     {
       Commit();
     }
 
-    // rfclose called by FileByteStream destructor
+    // rfclose called by FileByteStream destructor (null-safe if
+    // Commit already closed the handle)
   }
 
   bool Commit() override
   {
     if (m_committed)
-      return Flush();
+      return true;
 
+    // The pre-VFS Windows path opened the temporary with
+    // FILE_SHARE_DELETE and renamed it over the original while still
+    // open (MoveFileExW).  The VFS handle is a plain _wfopen without
+    // that sharing mode, so renaming - or deleting - the temporary
+    // while it is open fails with a sharing violation, leaving the
+    // new save stranded in .tmp and the original untouched.  Flush
+    // and close first, then rename through the VFS (which also
+    // routes correctly for frontend-backed paths).
     filestream_flush(m_pFile);
+    CloseFile();
 
-    // move the atomic file name to the original file name
-    if (rename(m_temporaryFileName.c_str(), m_originalFileName.c_str()) < 0)
-      m_discarded = true;
-    else
-      m_committed = true;
+    if (filestream_rename(m_temporaryFileName.c_str(), m_originalFileName.c_str()) != 0)
+    {
+      // A VFS backend without replace-existing rename semantics
+      // (e.g. a frontend whose Windows rename is plain _wrename)
+      // fails when the destination exists: fall back to
+      // delete-then-rename.  Not atomic, but strictly better than
+      // losing the new data; the atomic single-rename path is
+      // preserved wherever the backend supports it.
+      filestream_delete(m_originalFileName.c_str());
+      if (filestream_rename(m_temporaryFileName.c_str(), m_originalFileName.c_str()) != 0)
+      {
+        m_discarded = true;
+        filestream_delete(m_temporaryFileName.c_str());
+        return false;
+      }
+    }
 
-    return (!m_discarded);
+    m_committed = true;
+    return true;
   }
 
   bool Discard() override
@@ -649,8 +689,13 @@ std::unique_ptr<ByteStream> ByteStream_OpenFileStream(const char* fileName, uint
     char* temporaryFileName = (char*)alloca(fileNameLength + 8);
     std::snprintf(temporaryFileName, fileNameLength + 8, "%s.tmp", fileName);
 
-    // open the temporary file through libretro VFS
-    RFILE* pTemporaryFile = rfopen(temporaryFileName, modeString);
+    // open the temporary file through libretro VFS.  The temporary
+    // must always be created fresh (pre-VFS this was CREATE_NEW):
+    // passing the caller's append mode through maps to VFS
+    // UPDATE_EXISTING, which fails when the tmp does not exist yet -
+    // and would be wrong anyway, since the copy-in loop below is what
+    // provides the original content for non-truncating opens.
+    RFILE* pTemporaryFile = rfopen(temporaryFileName, (openMode & BYTESTREAM_OPEN_READ) ? "w+b" : "wb");
     if (!pTemporaryFile)
       return nullptr;
 
